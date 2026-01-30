@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snowstorm Terminology Browser</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .concept-card { cursor: pointer; transition: transform 0.1s; }
+        .concept-card:hover { transform: scale(1.01); background-color: #e9ecef; }
+        .details-panel { background: white; border-left: 1px solid #dee2e6; height: 100vh; overflow-y: auto; position: fixed; right: 0; top: 0; width: 40%; box-shadow: -2px 0 5px rgba(0,0,0,0.1); transform: translateX(100%); transition: transform 0.3s ease-in-out; z-index: 1050; }
+        .details-panel.active { transform: translateX(0); }
+        .badge-primitive { background-color: #ffc107; color: #000; }
+        .badge-defined { background-color: #198754; color: #fff; }
+        .spinner-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); z-index: 2000; display: flex; justify-content: center; align-items: center; }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div v-if="loading" class="spinner-overlay">
+        <div class="spinner-border text-primary" role="status"></div>
+    </div>
+
+    <nav class="navbar navbar-dark bg-dark sticky-top">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">Terminology Browser</span>
+            <div class="d-flex gap-2">
+                <select v-model="serverUrl" class="form-select form-select-sm" style="width: 200px;">
+                    <option value="http://84.8.248.255:8080">http://84.8.248.255:8080</option>
+                </select>
+                <button @click="fetchCodeSystems" class="btn btn-sm btn-outline-light">Refresh Systems</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <div class="col-md-12 transition-all" :class="{'col-md-7': selectedConcept}">
+                
+                <div class="card shadow-sm mb-4">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold">Code System</label>
+                                <select v-model="selectedBranch" class="form-select">
+                                    <option v-for="sys in codeSystems" :key="sys.branchPath" :value="sys.branchPath">
+                                        {{ sys.shortName }} ({{ sys.latestVersion.version }})
+                                    </option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">Search Term</label>
+                                <div class="input-group">
+                                    <input type="text" v-model="searchQuery" @keyup.enter="search" class="form-control" placeholder="e.g. 'viral pneumonia' or '73211009'">
+                                    <button @click="search" class="btn btn-primary">Search</button>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label fw-bold">Language</label>
+                                <select v-model="lang" class="form-select">
+                                    <option value="en">English</option>
+                                    <option value="de">German</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="results.length > 0" class="list-group shadow-sm">
+                    <div v-for="concept in results" :key="concept.conceptId" 
+                         @click="selectConcept(concept)"
+                         class="list-group-item list-group-item-action p-3 concept-card d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="d-flex align-items-center gap-2 mb-1">
+                                <span class="badge" :class="concept.definitionStatus === 'PRIMITIVE' ? 'badge-primitive' : 'badge-defined'">
+                                    {{ concept.definitionStatus }}
+                                </span>
+                                <span class="font-monospace text-muted small">{{ concept.conceptId }}</span>
+                            </div>
+                            <h5 class="mb-1 text-primary">{{ concept.pt.term }}</h5>
+                            <small class="text-muted">{{ concept.fsn.term }}</small>
+                        </div>
+                        <span class="text-muted fs-4">&rsaquo;</span>
+                    </div>
+                </div>
+                
+                <div v-else-if="hasSearched" class="alert alert-warning text-center">
+                    No results found.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="details-panel p-4" :class="{ 'active': selectedConcept }">
+        <div v-if="selectedConceptDetails">
+            <button @click="selectedConcept = null" class="btn btn-close float-end"></button>
+            <h2 class="h4 text-primary mb-3">{{ selectedConceptDetails.pt.term }}</h2>
+            
+            <div class="mb-4">
+                <h6 class="text-uppercase text-muted small fw-bold">SCTID</h6>
+                <div class="input-group input-group-sm">
+                    <input type="text" class="form-control font-monospace" :value="selectedConceptDetails.conceptId" readonly>
+                    <button class="btn btn-outline-secondary" @click="copyToClipboard(selectedConceptDetails.conceptId)">Copy</button>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <h6 class="text-uppercase text-muted small fw-bold">Fully Specified Name</h6>
+                <p>{{ selectedConceptDetails.fsn.term }}</p>
+            </div>
+
+            <div class="mb-4" v-if="parents.length">
+                <h6 class="text-uppercase text-muted small fw-bold">Parents (Is A)</h6>
+                <ul class="list-group list-group-flush">
+                    <li v-for="parent in parents" :key="parent.conceptId" class="list-group-item p-1 border-0">
+                         <a href="#" @click.prevent="loadConcept(parent.conceptId)" class="text-decoration-none">&uarr; {{ parent.pt.term }}</a>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="mb-4" v-if="children.length">
+                <h6 class="text-uppercase text-muted small fw-bold">Children (Subtypes)</h6>
+                <ul class="list-group list-group-flush">
+                    <li v-for="child in children" :key="child.conceptId" class="list-group-item p-1 border-0">
+                         <a href="#" @click.prevent="loadConcept(child.conceptId)" class="text-decoration-none">&darr; {{ child.pt.term }}</a>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="mb-4">
+                <h6 class="text-uppercase text-muted small fw-bold">Synonyms & Descriptions</h6>
+                <table class="table table-sm table-striped fs-6">
+                    <thead><tr><th>Term</th><th>Type</th><th>Lang</th></tr></thead>
+                    <tbody>
+                        <tr v-for="desc in selectedConceptDetails.descriptions" :key="desc.descriptionId">
+                            <td>{{ desc.term }}</td>
+                            <td><span class="badge bg-secondary">{{ desc.type }}</span></td>
+                            <td>{{ desc.lang }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+
+<script>
+    const { createApp } = Vue;
+
+    createApp({
+        data() {
+            return {
+                serverUrl: 'https://termserv.mateenraj.workers.dev',
+                codeSystems: [],
+                selectedBranch: '',
+                searchQuery: '',
+                lang: 'en',
+                results: [],
+                selectedConcept: null,
+                selectedConceptDetails: null,
+                parents: [],
+                children: [],
+                loading: false,
+                hasSearched: false
+            }
+        },
+        mounted() {
+            this.fetchCodeSystems();
+        },
+        methods: {
+            async fetchCodeSystems() {
+                this.loading = true;
+                try {
+                    // Try to fetch from server
+                    const response = await axios.get(`${this.serverUrl}/codesystems`);
+                    this.codeSystems = response.data.items;
+                    
+                    // Default to SNOMEDCT-DE if available based on your data, else first item
+                    const de = this.codeSystems.find(c => c.shortName === 'SNOMEDCT-DE');
+                    this.selectedBranch = de ? de.branchPath : this.codeSystems[0].branchPath;
+                } catch (error) {
+                    console.error("API Error, falling back to manual config if offline");
+                    alert(`Connection Failed: ${error.message}. Ensure you are not blocked by CORS or Mixed Content (HTTP vs HTTPS).`);
+                } finally {
+                    this.loading = false;
+                }
+            },
+            async search() {
+                if (!this.searchQuery) return;
+                this.loading = true;
+                this.selectedConcept = null; // Close panel
+                this.hasSearched = true;
+                
+                try {
+                    const url = `${this.serverUrl}/browser/${this.selectedBranch}/concepts`;
+                    const response = await axios.get(url, {
+                        params: {
+                            term: this.searchQuery,
+                            limit: 50,
+                            activeFilter: true,
+                            language: this.lang
+                        }
+                    });
+                    this.results = response.data.items;
+                } catch (error) {
+                    alert("Search failed: " + error.message);
+                } finally {
+                    this.loading = false;
+                }
+            },
+            async selectConcept(concept) {
+                this.loadConcept(concept.conceptId);
+            },
+            async loadConcept(conceptId) {
+                this.loading = true;
+                this.selectedConcept = conceptId;
+                
+                try {
+                    // 1. Get Concept Details
+                    const detailUrl = `${this.serverUrl}/browser/${this.selectedBranch}/concepts/${conceptId}`;
+                    const detailRes = await axios.get(detailUrl);
+                    this.selectedConceptDetails = detailRes.data;
+
+                    // 2. Get Children (for navigation)
+                    const childrenUrl = `${this.serverUrl}/browser/${this.selectedBranch}/concepts/${conceptId}/children`;
+                    const childRes = await axios.get(childrenUrl, { params: { form: 'inferred' }});
+                    this.children = childRes.data;
+
+                    // 3. Get Parents (for navigation)
+                    const parentsUrl = `${this.serverUrl}/browser/${this.selectedBranch}/concepts/${conceptId}/parents`;
+                    const parentRes = await axios.get(parentsUrl, { params: { form: 'inferred' }});
+                    this.parents = parentRes.data;
+
+                } catch (error) {
+                    console.error(error);
+                } finally {
+                    this.loading = false;
+                }
+            },
+            copyToClipboard(text) {
+                navigator.clipboard.writeText(text);
+            }
+        }
+    }).mount('#app');
+</script>
+
+</body>
+</html>
