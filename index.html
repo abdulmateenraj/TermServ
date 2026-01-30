@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminology Browser</title>
+    <meta name="description" content="Professional SNOMED CT terminology browser for searching concepts, viewing hierarchies, and exploring mappings">
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏥</text></svg>">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Bootstrap 5.3 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Loading Overlay -->
+        <div v-if="loading" class="loading-overlay">
+            <div class="loading-spinner">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-3 text-muted">{{ loadingMessage }}</p>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div class="toast-container position-fixed top-0 end-0 p-3">
+            <div v-for="toast in toasts" :key="toast.id" 
+                 class="toast show" :class="'bg-' + toast.type" role="alert">
+                <div class="toast-body d-flex align-items-center text-white">
+                    <i :class="toast.icon" class="me-2"></i>
+                    {{ toast.message }}
+                    <button type="button" class="btn-close btn-close-white ms-auto" @click="removeToast(toast.id)"></button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Header -->
+        <header class="app-header">
+            <div class="container-fluid">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="app-logo">
+                            <i class="bi bi-hospital"></i>
+                        </div>
+                        <h1 class="app-title mb-0">Terminology Browser</h1>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="connection-status" :class="{'connected': isConnected, 'disconnected': !isConnected}">
+                            <i class="bi" :class="isConnected ? 'bi-wifi' : 'bi-wifi-off'"></i>
+                            <span>{{ isConnected ? 'Connected' : 'Disconnected' }}</span>
+                        </div>
+                        <button class="btn btn-outline-light btn-sm" @click="showSettings = true" title="Settings">
+                            <i class="bi bi-gear"></i>
+                        </button>
+                        <button class="btn btn-outline-light btn-sm" @click="showHelp = true" title="Help">
+                            <i class="bi bi-question-circle"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="app-main">
+            <div class="container-fluid h-100">
+                <div class="row h-100">
+                    <!-- Left Panel: Search & Results -->
+                    <div class="col-lg-6 col-xl-5 h-100 d-flex flex-column border-end">
+                        <!-- Search Section -->
+                        <div class="search-section">
+                            <!-- Code System Selector -->
+                            <div class="mb-3">
+                                <select v-model="selectedBranch" class="form-select form-select-lg" @change="onCodeSystemChange">
+                                    <option v-for="sys in codeSystems" :key="sys.branchPath" :value="sys.branchPath">
+                                        {{ sys.label }} ({{ sys.version }}) {{ sys.languages ? '- ' + sys.languages : '' }}
+                                    </option>
+                                </select>
+                            </div>
+
+                            <!-- Search Input -->
+                            <div class="mb-3">
+                                <div class="input-group input-group-lg">
+                                    <input type="text" 
+                                           v-model="searchQuery" 
+                                           @keyup.enter="search"
+                                           @input="onSearchInput"
+                                           class="form-control" 
+                                           placeholder="Search term or SCTID...">
+                                    <button class="btn btn-primary px-4" @click="search" :disabled="!searchQuery.trim()">
+                                        <i class="bi bi-search"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Search Filters - Compact inline -->
+                            <div class="search-filters d-flex flex-wrap align-items-center gap-2 mb-2">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" v-model="filters.activeOnly" id="activeOnly">
+                                    <label class="form-check-label small" for="activeOnly">Active only</label>
+                                </div>
+                                <select v-model="filters.limit" class="form-select form-select-sm no-arrow limit-select" style="width: auto;">
+                                    <option :value="25">25</option>
+                                    <option :value="50">50</option>
+                                    <option :value="100">100</option>
+                                </select>
+                                <select v-model="filters.semanticTag" class="form-select form-select-sm no-arrow semantic-select" style="width: auto;">
+                                    <option value="">All types</option>
+                                    <option value="disorder">Disorder</option>
+                                    <option value="finding">Finding</option>
+                                    <option value="procedure">Procedure</option>
+                                    <option value="body structure">Body structure</option>
+                                    <option value="substance">Substance</option>
+                                    <option value="product">Product</option>
+                                    <option value="organism">Organism</option>
+                                    <option value="observable entity">Observable</option>
+                                </select>
+                                <div class="filter-spacer"></div>
+                                <div class="filter-actions">
+                                    <button class="btn btn-outline-secondary btn-sm" @click="showHistory = !showHistory" 
+                                            :class="{'active': showHistory}" title="History">
+                                        <i class="bi bi-clock-history"></i>
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm" @click="showBookmarks = !showBookmarks"
+                                            :class="{'active': showBookmarks}" title="Bookmarks">
+                                        <i class="bi bi-bookmark"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- History Panel -->
+                            <div v-if="showHistory && searchHistory.length > 0" class="history-panel mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <small class="text-muted fw-semibold">Recent Searches</small>
+                                    <button class="btn btn-link btn-sm text-danger p-0" @click="clearHistory">Clear all</button>
+                                </div>
+                                <div class="list-group list-group-flush">
+                                    <a v-for="item in searchHistory.slice(0, 10)" :key="item.timestamp"
+                                       href="#" class="list-group-item list-group-item-action py-2"
+                                       @click.prevent="quickSearch(item.query)">
+                                        <i class="bi bi-clock me-2 text-muted"></i>{{ item.query }}
+                                        <small class="text-muted float-end">{{ formatTimeAgo(item.timestamp) }}</small>
+                                    </a>
+                                </div>
+                            </div>
+
+                            <!-- Bookmarks Panel -->
+                            <div v-if="showBookmarks && bookmarks.length > 0" class="bookmarks-panel mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <small class="text-muted fw-semibold">Bookmarked Concepts</small>
+                                    <button class="btn btn-link btn-sm text-danger p-0" @click="clearBookmarks">Clear all</button>
+                                </div>
+                                <div class="list-group list-group-flush">
+                                    <a v-for="item in bookmarks" :key="item.conceptId"
+                                       href="#" class="list-group-item list-group-item-action py-2"
+                                       @click.prevent="loadConcept(item.conceptId)">
+                                        <i class="bi bi-bookmark-fill me-2 text-warning"></i>
+                                        <span class="text-truncate">{{ item.term }}</span>
+                                        <small class="text-muted d-block font-monospace">{{ item.conceptId }}</small>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Results Section -->
+                        <div class="results-section flex-grow-1 overflow-auto">
+                            <!-- Results Header -->
+                            <div v-if="results.length > 0" class="results-header">
+                                <span class="text-muted">
+                                    <i class="bi bi-list-ul me-1"></i>
+                                    {{ totalResults }} results found
+                                    <span v-if="searchQuery">&mdash; "{{ searchQuery }}"</span>
+                                </span>
+                            </div>
+
+                            <!-- Results List -->
+                            <div class="results-list">
+                                <div v-for="concept in results" :key="concept.conceptId" 
+                                     @click="selectConcept(concept)"
+                                     class="concept-card"
+                                     :class="{'active': selectedConcept === concept.conceptId}">
+                                    
+                                    <div class="concept-card-header">
+                                        <span class="definition-badge" 
+                                              :class="concept.definitionStatus === 'PRIMITIVE' ? 'primitive' : 'defined'"
+                                              :title="concept.definitionStatus === 'PRIMITIVE' ? 'Primitive concept' : 'Fully defined concept'">
+                                            {{ concept.definitionStatus === 'PRIMITIVE' ? 'P' : 'D' }}
+                                        </span>
+                                        <span v-if="!concept.active" class="inactive-badge" title="Inactive concept">
+                                            <i class="bi bi-x-circle"></i> Inactive
+                                        </span>
+                                    </div>
+
+                                    <div class="concept-card-body">
+                                        <div class="concept-id">
+                                            <span class="font-monospace">{{ concept.conceptId }}</span>
+                                            <button class="copy-btn" @click.stop="copyToClipboard(concept.conceptId)" title="Copy SCTID">
+                                                <i class="bi bi-clipboard"></i>
+                                            </button>
+                                        </div>
+                                        <h6 class="concept-term mb-1">
+                                            {{ concept.fsn ? concept.fsn.term : (concept.pt ? concept.pt.term : concept.conceptId) }}
+                                        </h6>
+                                        <small v-if="concept.pt && concept.fsn" class="text-muted">
+                                            PT: {{ concept.pt.term }}
+                                        </small>
+                                    </div>
+
+                                    <div class="concept-card-actions">
+                                        <i class="bi bi-chevron-right"></i>
+                                    </div>
+                                </div>
+
+                                <!-- Load More -->
+                                <div v-if="hasMoreResults" class="text-center py-3">
+                                    <button class="btn btn-outline-primary" @click="loadMore">
+                                        <i class="bi bi-plus-circle me-1"></i>Load more results
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Empty State -->
+                            <div v-if="hasSearched && results.length === 0" class="empty-state">
+                                <i class="bi bi-search"></i>
+                                <h5>No results found</h5>
+                                <p class="text-muted">Try adjusting your search terms or filters</p>
+                            </div>
+
+                            <!-- Initial State -->
+                            <div v-if="!hasSearched && results.length === 0" class="empty-state">
+                                <i class="bi bi-search"></i>
+                                <h5>Search for concepts</h5>
+                                <p class="text-muted">Enter a term or SNOMED CT ID to get started</p>
+                                <div class="mt-3">
+                                    <button class="btn btn-outline-primary me-2" @click="quickSearch('diabetes')">diabetes</button>
+                                    <button class="btn btn-outline-primary me-2" @click="quickSearch('pneumonia')">pneumonia</button>
+                                    <button class="btn btn-outline-primary" @click="quickSearch('heart')">heart</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Panel: Concept Details -->
+                    <div class="col-lg-6 col-xl-7 h-100 d-flex flex-column">
+                        <div v-if="selectedConceptDetails" class="concept-details h-100 overflow-auto">
+                            <!-- Concept Header -->
+                            <div class="concept-details-header">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <div class="d-flex align-items-center gap-2 mb-2">
+                                            <span class="definition-badge large"
+                                                  :class="selectedConceptDetails.definitionStatus === 'PRIMITIVE' ? 'primitive' : 'defined'">
+                                                {{ selectedConceptDetails.definitionStatus }}
+                                            </span>
+                                            <span v-if="!selectedConceptDetails.active" class="badge bg-danger">Inactive</span>
+                                            <span class="badge bg-secondary" v-if="selectedConceptDetails.moduleId">
+                                                Module: {{ getModuleName(selectedConceptDetails.moduleId) }}
+                                            </span>
+                                        </div>
+                                        <h3 class="concept-main-term mb-2">
+                                            {{ selectedConceptDetails.fsn ? selectedConceptDetails.fsn.term : selectedConceptDetails.pt?.term }}
+                                        </h3>
+                                        <div class="concept-id-display">
+                                            <span class="font-monospace">{{ selectedConceptDetails.conceptId }}</span>
+                                            <button class="btn btn-sm btn-outline-secondary" @click="copyToClipboard(selectedConceptDetails.conceptId)">
+                                                <i class="bi bi-clipboard"></i> Copy
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-secondary" @click="copyFSN">
+                                                <i class="bi bi-clipboard"></i> Copy FSN
+                                            </button>
+                                            <button class="btn btn-sm" 
+                                                    :class="isBookmarked(selectedConceptDetails.conceptId) ? 'btn-warning' : 'btn-outline-warning'"
+                                                    @click="toggleBookmark(selectedConceptDetails)">
+                                                <i class="bi" :class="isBookmarked(selectedConceptDetails.conceptId) ? 'bi-bookmark-fill' : 'bi-bookmark'"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-link text-muted" @click="closeConcept">
+                                        <i class="bi bi-x-lg"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Tabs Navigation -->
+                            <ul class="nav nav-tabs concept-tabs" role="tablist">
+                                <li class="nav-item">
+                                    <button class="nav-link" :class="{'active': activeTab === 'overview'}" @click="activeTab = 'overview'">
+                                        Overview
+                                    </button>
+                                </li>
+                                <li class="nav-item">
+                                    <button class="nav-link" :class="{'active': activeTab === 'hierarchy'}" @click="activeTab = 'hierarchy'">
+                                        Hierarchy
+                                    </button>
+                                </li>
+                                <li class="nav-item">
+                                    <button class="nav-link" :class="{'active': activeTab === 'descriptions'}" @click="activeTab = 'descriptions'; fetchDescriptions()">
+                                        Descriptions<span v-if="descriptions.length" class="badge bg-secondary ms-1">{{ descriptions.length }}</span>
+                                    </button>
+                                </li>
+                                <li class="nav-item">
+                                    <button class="nav-link" :class="{'active': activeTab === 'relationships'}" @click="activeTab = 'relationships'; fetchRelationships()">
+                                        Relationships<span v-if="relationships.length" class="badge bg-secondary ms-1">{{ relationships.length }}</span>
+                                    </button>
+                                </li>
+                                <li class="nav-item">
+                                    <button class="nav-link" :class="{'active': activeTab === 'mappings'}" @click="activeTab = 'mappings'; fetchMappings()">
+                                        Maps<span v-if="mappings.length" class="badge bg-secondary ms-1">{{ mappings.length }}</span>
+                                    </button>
+                                </li>
+                                <li class="nav-item">
+                                    <button class="nav-link" :class="{'active': activeTab === 'refsets'}" @click="activeTab = 'refsets'; fetchRefsets()">
+                                        Refsets
+                                    </button>
+                                </li>
+                            </ul>
+
+                            <!-- Tab Content -->
+                            <div class="concept-tab-content">
+                                <!-- Overview Tab -->
+                                <div v-show="activeTab === 'overview'" class="tab-pane">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="info-card">
+                                                <h6><i class="bi bi-tag me-2"></i>Preferred Term</h6>
+                                                <p>{{ selectedConceptDetails.pt ? selectedConceptDetails.pt.term : 'N/A' }}</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="info-card">
+                                                <h6><i class="bi bi-file-text me-2"></i>Fully Specified Name</h6>
+                                                <p>{{ selectedConceptDetails.fsn ? selectedConceptDetails.fsn.term : 'N/A' }}</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="info-card">
+                                                <h6><i class="bi bi-calendar me-2"></i>Effective Time</h6>
+                                                <p>{{ formatEffectiveTime(selectedConceptDetails.effectiveTime) }}</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="info-card">
+                                                <h6><i class="bi bi-box me-2"></i>Module</h6>
+                                                <p class="font-monospace small">{{ selectedConceptDetails.moduleId }}</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="info-card">
+                                                <h6><i class="bi bi-check-circle me-2"></i>Definition Status</h6>
+                                                <p>
+                                                    <span class="badge" :class="selectedConceptDetails.definitionStatus === 'PRIMITIVE' ? 'bg-warning text-dark' : 'bg-success'">
+                                                        {{ selectedConceptDetails.definitionStatus }}
+                                                    </span>
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="info-card">
+                                                <h6><i class="bi bi-activity me-2"></i>Status</h6>
+                                                <p>
+                                                    <span class="badge" :class="selectedConceptDetails.active ? 'bg-success' : 'bg-danger'">
+                                                        {{ selectedConceptDetails.active ? 'Active' : 'Inactive' }}
+                                                    </span>
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Quick Hierarchy Preview -->
+                                    <div class="info-card mt-3">
+                                        <h6><i class="bi bi-diagram-3 me-2"></i>Quick Hierarchy</h6>
+                                        <div class="hierarchy-preview">
+                                            <div v-if="parents === null" class="text-center py-3">
+                                                <button class="btn btn-outline-primary btn-sm" @click="fetchParents">
+                                                    <i class="bi bi-arrow-up me-1"></i>Load Parents
+                                                </button>
+                                            </div>
+                                            <div v-else-if="parents.length === 0" class="text-muted small">No parents (Root concept)</div>
+                                            <div v-else class="parent-list">
+                                                <div v-for="parent in parents.slice(0, 5)" :key="parent.conceptId" class="hierarchy-item parent">
+                                                    <a href="#" @click.prevent="loadConcept(parent.conceptId)">
+                                                        <i class="bi bi-arrow-up-short"></i>
+                                                        {{ parent.fsn ? parent.fsn.term : parent.pt?.term || parent.conceptId }}
+                                                    </a>
+                                                </div>
+                                                <div v-if="parents.length > 5" class="text-muted small">
+                                                    ...and {{ parents.length - 5 }} more
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="current-concept">
+                                                <i class="bi bi-circle-fill text-primary"></i>
+                                                {{ selectedConceptDetails.fsn?.term || selectedConceptDetails.pt?.term }}
+                                            </div>
+
+                                            <div v-if="children === null" class="text-center py-3">
+                                                <button class="btn btn-outline-primary btn-sm" @click="fetchChildren">
+                                                    <i class="bi bi-arrow-down me-1"></i>Load Children
+                                                </button>
+                                            </div>
+                                            <div v-else-if="children.length === 0" class="text-muted small">No children (Leaf concept)</div>
+                                            <div v-else class="child-list">
+                                                <div v-for="child in children.slice(0, 5)" :key="child.conceptId" class="hierarchy-item child">
+                                                    <a href="#" @click.prevent="loadConcept(child.conceptId)">
+                                                        <i class="bi bi-arrow-down-short"></i>
+                                                        {{ child.fsn ? child.fsn.term : child.pt?.term || child.conceptId }}
+                                                    </a>
+                                                </div>
+                                                <div v-if="children.length > 5" class="text-muted small">
+                                                    ...and {{ children.length - 5 }} more
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Hierarchy Tab -->
+                                <div v-show="activeTab === 'hierarchy'" class="tab-pane">
+                                    <div class="row">
+                                        <!-- Parents -->
+                                        <div class="col-md-6">
+                                            <div class="hierarchy-section">
+                                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                                    <h6 class="mb-0">
+                                                        <i class="bi bi-arrow-up-circle me-2 text-primary"></i>
+                                                        Parents (Is-A)
+                                                    </h6>
+                                                    <button v-if="parents === null" class="btn btn-primary btn-sm" @click="fetchParents">
+                                                        <i class="bi bi-arrow-clockwise me-1"></i>Load
+                                                    </button>
+                                                    <span v-else class="badge bg-primary">{{ parents.length }}</span>
+                                                </div>
+                                                <div v-if="parentsLoading" class="text-center py-4">
+                                                    <div class="spinner-border spinner-border-sm text-primary"></div>
+                                                </div>
+                                                <div v-else-if="parents && parents.length === 0" class="alert alert-light">
+                                                    <i class="bi bi-info-circle me-1"></i>Root concept - no parents
+                                                </div>
+                                                <div v-else-if="parents" class="list-group list-group-flush">
+                                                    <a v-for="parent in parents" :key="parent.conceptId"
+                                                       href="#" class="list-group-item list-group-item-action"
+                                                       @click.prevent="loadConcept(parent.conceptId)">
+                                                        <div class="d-flex justify-content-between align-items-center">
+                                                            <div>
+                                                                <i class="bi bi-arrow-up text-primary me-2"></i>
+                                                                <span>{{ parent.fsn ? parent.fsn.term : parent.pt?.term || parent.conceptId }}</span>
+                                                            </div>
+                                                            <small class="font-monospace text-muted">{{ parent.conceptId }}</small>
+                                                        </div>
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Children -->
+                                        <div class="col-md-6">
+                                            <div class="hierarchy-section">
+                                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                                    <h6 class="mb-0">
+                                                        <i class="bi bi-arrow-down-circle me-2 text-success"></i>
+                                                        Children (Subtypes)
+                                                    </h6>
+                                                    <button v-if="children === null" class="btn btn-success btn-sm" @click="fetchChildren">
+                                                        <i class="bi bi-arrow-clockwise me-1"></i>Load
+                                                    </button>
+                                                    <span v-else class="badge bg-success">{{ children.length }}</span>
+                                                </div>
+                                                <div v-if="childrenLoading" class="text-center py-4">
+                                                    <div class="spinner-border spinner-border-sm text-success"></div>
+                                                </div>
+                                                <div v-else-if="children && children.length === 0" class="alert alert-light">
+                                                    <i class="bi bi-info-circle me-1"></i>Leaf concept - no children
+                                                </div>
+                                                <div v-else-if="children" class="list-group list-group-flush hierarchy-list">
+                                                    <a v-for="child in children" :key="child.conceptId"
+                                                       href="#" class="list-group-item list-group-item-action"
+                                                       @click.prevent="loadConcept(child.conceptId)">
+                                                        <div class="d-flex justify-content-between align-items-center">
+                                                            <div>
+                                                                <i class="bi bi-arrow-down text-success me-2"></i>
+                                                                <span>{{ child.fsn ? child.fsn.term : child.pt?.term || child.conceptId }}</span>
+                                                            </div>
+                                                            <small class="font-monospace text-muted">{{ child.conceptId }}</small>
+                                                        </div>
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Ancestors & Descendants (optional deep load) -->
+                                    <div class="row mt-4">
+                                        <div class="col-12">
+                                            <div class="d-flex gap-2">
+                                                <button class="btn btn-outline-primary" @click="fetchAncestors" :disabled="ancestorsLoading">
+                                                    <i class="bi bi-arrow-bar-up me-1"></i>Load All Ancestors
+                                                    <span v-if="ancestors.length" class="badge bg-primary ms-1">{{ ancestors.length }}</span>
+                                                </button>
+                                                <button class="btn btn-outline-success" @click="fetchDescendantsCount">
+                                                    <i class="bi bi-arrow-bar-down me-1"></i>Count Descendants
+                                                    <span v-if="descendantsCount !== null" class="badge bg-success ms-1">{{ descendantsCount }}</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Ancestors List -->
+                                    <div v-if="ancestors.length > 0" class="mt-4">
+                                        <h6><i class="bi bi-list-nested me-2"></i>All Ancestors ({{ ancestors.length }})</h6>
+                                        <div class="ancestor-tree">
+                                            <div v-for="(ancestor, idx) in ancestors" :key="ancestor.conceptId" 
+                                                 class="ancestor-item" :style="{marginLeft: (idx % 5) * 10 + 'px'}">
+                                                <a href="#" @click.prevent="loadConcept(ancestor.conceptId)">
+                                                    {{ ancestor.fsn ? ancestor.fsn.term : ancestor.conceptId }}
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Descriptions Tab -->
+                                <div v-show="activeTab === 'descriptions'" class="tab-pane">
+                                    <div v-if="descriptionsLoading" class="text-center py-4">
+                                        <div class="spinner-border text-primary"></div>
+                                        <p class="mt-2 text-muted">Loading descriptions...</p>
+                                    </div>
+                                    <div v-else-if="descriptions.length === 0" class="alert alert-info">
+                                        <i class="bi bi-info-circle me-2"></i>No descriptions found or still loading...
+                                        <button class="btn btn-sm btn-primary ms-2" @click="fetchDescriptions">
+                                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                                        </button>
+                                    </div>
+                                    <div v-else>
+                                        <div class="table-responsive">
+                                            <table class="table table-hover table-sm">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Term</th>
+                                                        <th>Type</th>
+                                                        <th>Lang</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr v-for="desc in descriptions" :key="desc.descriptionId || desc.id">
+                                                        <td>{{ desc.term }}</td>
+                                                        <td>
+                                                            <span class="badge" :class="getDescriptionTypeBadge(desc.type)">
+                                                                {{ desc.type }}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <span class="lang-badge" :class="(desc.lang || desc.languageCode) === 'de' ? 'lang-de' : 'lang-en'">
+                                                                {{ desc.lang || desc.languageCode }}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <button class="btn btn-sm btn-outline-secondary" @click="copyToClipboard(desc.term)">
+                                                                <i class="bi bi-clipboard"></i>
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Relationships Tab -->
+                                <div v-show="activeTab === 'relationships'" class="tab-pane">
+                                    <div v-if="relationshipsLoading" class="text-center py-4">
+                                        <div class="spinner-border text-primary"></div>
+                                        <p class="mt-2 text-muted">Loading relationships...</p>
+                                    </div>
+                                    <div v-else-if="relationships.length === 0" class="alert alert-info">
+                                        <i class="bi bi-info-circle me-2"></i>No relationships found or still loading...
+                                        <button class="btn btn-sm btn-primary ms-2" @click="fetchRelationships">
+                                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                                        </button>
+                                    </div>
+                                    <div v-else>
+                                        <div class="mb-3">
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn" :class="relationshipFilter === 'all' ? 'btn-primary' : 'btn-outline-primary'"
+                                                        @click="relationshipFilter = 'all'">All</button>
+                                                <button class="btn" :class="relationshipFilter === 'stated' ? 'btn-primary' : 'btn-outline-primary'"
+                                                        @click="relationshipFilter = 'stated'">Stated</button>
+                                                <button class="btn" :class="relationshipFilter === 'inferred' ? 'btn-primary' : 'btn-outline-primary'"
+                                                        @click="relationshipFilter = 'inferred'">Inferred</button>
+                                            </div>
+                                        </div>
+                                        <div class="table-responsive">
+                                            <table class="table table-hover table-sm">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Type</th>
+                                                        <th>Target</th>
+                                                        <th>Form</th>
+                                                        <th>Group</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr v-for="rel in filteredRelationships" :key="rel.relationshipId || rel.id">
+                                                        <td>
+                                                            <span class="badge bg-secondary">
+                                                                {{ rel.type?.fsn?.term || rel.type?.pt?.term || 'Is a' }}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <a href="#" @click.prevent="loadConcept(rel.target?.conceptId || rel.destinationId)">
+                                                                {{ rel.target?.fsn?.term || rel.target?.pt?.term || rel.destinationId }}
+                                                            </a>
+                                                        </td>
+                                                        <td>
+                                                            <span class="badge" :class="rel.characteristicType === 'STATED_RELATIONSHIP' ? 'bg-info' : 'bg-warning'">
+                                                                {{ rel.characteristicType === 'STATED_RELATIONSHIP' ? 'Stated' : 'Inferred' }}
+                                                            </span>
+                                                        </td>
+                                                        <td>{{ rel.groupId || rel.relationshipGroup || 0 }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Mappings Tab -->
+                                <div v-show="activeTab === 'mappings'" class="tab-pane">
+                                    <div v-if="mappingsLoading" class="text-center py-4">
+                                        <div class="spinner-border text-primary"></div>
+                                    </div>
+                                    <div v-else-if="mappings.length === 0 && !mappingsLoaded" class="text-center py-4">
+                                        <p class="text-muted">Loading mappings...</p>
+                                    </div>
+                                    <div v-else-if="mappings.length === 0" class="alert alert-info">
+                                        <i class="bi bi-info-circle me-2"></i>No mappings found for this concept
+                                    </div>
+                                    <div v-else>
+                                        <div class="table-responsive">
+                                            <table class="table table-hover">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Refset</th>
+                                                        <th>Map Target</th>
+                                                        <th>Map Group</th>
+                                                        <th>Map Priority</th>
+                                                        <th>Map Rule</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr v-for="map in mappings" :key="map.memberId">
+                                                        <td>
+                                                            <small>{{ map.refsetId }}</small>
+                                                        </td>
+                                                        <td class="font-monospace">{{ map.mapTarget || map.additionalFields?.mapTarget || 'N/A' }}</td>
+                                                        <td>{{ map.mapGroup || map.additionalFields?.mapGroup || '-' }}</td>
+                                                        <td>{{ map.mapPriority || map.additionalFields?.mapPriority || '-' }}</td>
+                                                        <td><small>{{ map.mapRule || map.additionalFields?.mapRule || '-' }}</small></td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Refsets Tab -->
+                                <div v-show="activeTab === 'refsets'" class="tab-pane">
+                                    <div v-if="refsetsLoading" class="text-center py-4">
+                                        <div class="spinner-border text-primary"></div>
+                                    </div>
+                                    <div v-else-if="refsets.length === 0 && !refsetsLoaded" class="text-center py-4">
+                                        <p class="text-muted">Loading reference sets...</p>
+                                    </div>
+                                    <div v-else-if="refsets.length === 0" class="alert alert-info">
+                                        <i class="bi bi-info-circle me-2"></i>This concept is not a member of any reference sets
+                                    </div>
+                                    <div v-else>
+                                        <div class="list-group">
+                                            <div v-for="refset in refsets" :key="refset.memberId" class="list-group-item">
+                                                <div class="d-flex justify-content-between">
+                                                    <div>
+                                                        <h6 class="mb-1">{{ refset.referencedComponent?.fsn?.term || refset.refsetId }}</h6>
+                                                        <small class="text-muted font-monospace">{{ refset.refsetId }}</small>
+                                                    </div>
+                                                    <span class="badge" :class="refset.active ? 'bg-success' : 'bg-secondary'">
+                                                        {{ refset.active ? 'Active' : 'Inactive' }}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Empty Details State -->
+                        <div v-else class="concept-details-empty h-100 d-flex align-items-center justify-content-center">
+                            <div class="text-center">
+                                <i class="bi bi-arrow-left-circle display-4 text-muted"></i>
+                                <h5 class="mt-3 text-muted">Select a concept</h5>
+                                <p class="text-muted">Click on a search result to view details</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Settings Modal -->
+        <div class="modal" :class="{'show d-block': showSettings}" tabindex="-1" @click.self="showSettings = false">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Settings</h5>
+                        <button type="button" class="btn-close" @click="showSettings = false"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-4">
+                            <h6 class="text-uppercase text-muted small fw-semibold mb-3">Server Configuration</h6>
+                            <div class="mb-3">
+                                <label class="form-label">API Endpoint</label>
+                                <input type="text" v-model="config.apiUrl" class="form-control" 
+                                       placeholder="https://your-worker.workers.dev">
+                                <div class="form-text">Enter your Cloudflare Worker URL or direct server URL</div>
+                            </div>
+                            <button class="btn btn-primary" @click="testConnection">
+                                <i class="bi bi-wifi me-1"></i>Test Connection
+                            </button>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <h6 class="text-uppercase text-muted small fw-semibold mb-3">Display Options</h6>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" v-model="config.showInactive" id="showInactive">
+                                <label class="form-check-label" for="showInactive">Show inactive concepts in results</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" v-model="config.darkMode" id="darkMode" @change="toggleDarkMode">
+                                <label class="form-check-label" for="darkMode">Dark mode</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" v-model="config.compactView" id="compactView">
+                                <label class="form-check-label" for="compactView">Compact view</label>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6 class="text-uppercase text-muted small fw-semibold mb-3">Data Management</h6>
+                            <button class="btn btn-outline-danger me-2" @click="clearAllData">
+                                <i class="bi bi-trash me-1"></i>Clear All Local Data
+                            </button>
+                            <button class="btn btn-outline-secondary" @click="exportBookmarks">
+                                <i class="bi bi-download me-1"></i>Export Bookmarks
+                            </button>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @click="showSettings = false">Close</button>
+                        <button type="button" class="btn btn-primary" @click="saveSettings">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Help Modal -->
+        <div class="modal" :class="{'show d-block': showHelp}" tabindex="-1" @click.self="showHelp = false">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-question-circle me-2"></i>Help & Documentation</h5>
+                        <button type="button" class="btn-close" @click="showHelp = false"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="accordion" id="helpAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#help1">
+                                        Getting Started
+                                    </button>
+                                </h2>
+                                <div id="help1" class="accordion-collapse collapse show" data-bs-parent="#helpAccordion">
+                                    <div class="accordion-body">
+                                        <ol>
+                                            <li>Select a code system from the dropdown (e.g., SNOMED CT International, German Extension)</li>
+                                            <li>Enter a search term or SNOMED CT ID</li>
+                                            <li>Click on a result to view detailed information</li>
+                                            <li>Navigate the hierarchy using parent/child links</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#help2">
+                                        Search Tips
+                                    </button>
+                                </h2>
+                                <div id="help2" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li><strong>Term search:</strong> Enter any clinical term (e.g., "diabetes mellitus")</li>
+                                            <li><strong>ID search:</strong> Enter a SNOMED CT ID (e.g., "73211009")</li>
+                                            <li><strong>Wildcards:</strong> Use * for partial matching</li>
+                                            <li><strong>Filters:</strong> Use semantic tag filters to narrow results</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#help3">
+                                        Keyboard Shortcuts
+                                    </button>
+                                </h2>
+                                <div id="help3" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                                    <div class="accordion-body">
+                                        <table class="table table-sm">
+                                            <tr><td><kbd>Enter</kbd></td><td>Execute search</td></tr>
+                                            <tr><td><kbd>Esc</kbd></td><td>Close detail panel</td></tr>
+                                            <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Focus search box</td></tr>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#help4">
+                                        About
+                                    </button>
+                                </h2>
+                                <div id="help4" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                                    <div class="accordion-body">
+                                        <p>SNOMED CT Terminology Browser v2.0</p>
+                                        <p>Built for healthcare professionals and developers working with SNOMED CT terminology.</p>
+                                        <p class="text-muted small">Powered by Snowstorm Terminology Server</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
