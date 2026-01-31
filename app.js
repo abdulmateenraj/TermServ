@@ -17,17 +17,16 @@ const app = createApp({
     data() {
         return {
             // Configuration
-            config: {
-                // Dynamic URL detection:
-                // If on localhost, use port 3000 (Node proxy).
-                // If on production (terminologies.tech), use relative path '/api' (Cloudflare Worker).
-                apiUrl: (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
-                        ? 'http://localhost:3000' 
-                        : '/api',
-                showInactive: false,
-                darkMode: false,
-                compactView: false
-            },
+          config: {
+    // FORCE relative path for production. 
+    // The Worker will handle the translation of '/api' to the real server.
+    apiUrl: (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
+            ? 'http://localhost:3000' 
+            : '/api', // This MUST remain '/api'
+    showInactive: false,
+    darkMode: false,
+    compactView: false
+},
 
             // Connection state
             isConnected: false,
@@ -895,3 +894,4 @@ const app = createApp({
 });
 
 app.mount('#app');
+
