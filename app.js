@@ -154,7 +154,7 @@ config: {
         // ==========================================
 
         async apiRequest(endpoint, params = {}) {
-            const url = new URL(this.config.apiUrl + endpoint);
+            const url = new URL(this.config.apiUrl + endpoint, window.location.origin);
             Object.keys(params).forEach(key => {
                 if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
                     url.searchParams.append(key, params[key]);
@@ -877,6 +877,7 @@ config: {
 });
 
 app.mount('#app');
+
 
 
 
