@@ -18,15 +18,18 @@ const app = createApp({
     data() {
         return {
             // Configuration
-            config: {
-                // IMPORTANT: Update this URL to your Cloudflare Worker URL after deployment
-                // For local testing with proxy: 'http://localhost:3000'
-                // For production with Cloudflare Worker: 'https://your-worker.workers.dev'
-                apiUrl: '/api',  // LOCAL TESTING - change to Cloudflare Worker URL for production
-                showInactive: false,
-                darkMode: false,
-                compactView: false
-            },
+config: {
+    // Dynamic URL detection
+    // If hostname is localhost/127.0.0.1, use local Node proxy (port 3000)
+    // Otherwise (terminologies.tech), use the relative Cloudflare Worker path (/api)
+    apiUrl: (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
+            ? 'http://localhost:3000' 
+            : '/api',
+            
+    showInactive: false,
+    darkMode: false,
+    compactView: false
+},
 
             // Connection state
             isConnected: false,
@@ -874,5 +877,6 @@ const app = createApp({
 });
 
 app.mount('#app');
+
 
 
