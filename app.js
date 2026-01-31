@@ -149,7 +149,10 @@ config: {
         // ==========================================
 
         async apiRequest(endpoint, params = {}) {
+            // FIX: We pass 'window.location.origin' as the second argument.
+            // This tells the browser: "Attach /api/codesystems to the current website address."
             const url = new URL(this.config.apiUrl + endpoint, window.location.origin);
+
             Object.keys(params).forEach(key => {
                 if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
                     url.searchParams.append(key, params[key]);
@@ -872,6 +875,7 @@ config: {
 });
 
 app.mount('#app');
+
 
 
 
