@@ -163,13 +163,30 @@ const app = createApp({
             });
             
             try {
-                const response = await fetch(url.toString());
+                console.log('API Request:', url.toString()); // Debug logging
+                
+                const response = await fetch(url.toString(), {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    // Try to get error details from response body
+                    let errorDetails = '';
+                    try {
+                        const errorBody = await response.text();
+                        errorDetails = errorBody ? ` - ${errorBody}` : '';
+                    } catch (e) {
+                        // Ignore if we can't read the body
+                    }
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}${errorDetails}`);
                 }
                 return await response.json();
             } catch (error) {
                 console.error('API Error:', error);
+                console.error('Request URL was:', url.toString());
                 throw error;
             }
         },
