@@ -19,17 +19,12 @@ const app = createApp({
         return {
             // Configuration
 config: {
-    // Dynamic URL detection
-    // If hostname is localhost/127.0.0.1, use local Node proxy (port 3000)
-    // Otherwise (terminologies.tech), use the relative Cloudflare Worker path (/api)
-    apiUrl: (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
-            ? 'http://localhost:3000' 
-            : '/api',
-            
-    showInactive: false,
-    darkMode: false,
-    compactView: false
-},
+                // Route requests through the Cloudflare Worker
+                apiUrl: '/api',
+                showInactive: false,
+                darkMode: false,
+                compactView: false
+            },
 
             // Connection state
             isConnected: false,
@@ -877,6 +872,7 @@ config: {
 });
 
 app.mount('#app');
+
 
 
 
