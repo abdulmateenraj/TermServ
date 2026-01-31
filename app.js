@@ -1,8 +1,7 @@
 /**
  * SNOMED CT Terminology Browser
  * Professional Healthcare Terminology Explorer
- * 
- * Features:
+ * * Features:
  * - Concept search with filters
  * - Hierarchy navigation (parents/children/ancestors)
  * - Descriptions and relationships viewing
@@ -18,9 +17,13 @@ const app = createApp({
     data() {
         return {
             // Configuration
-config: {
-                // Route requests through the Cloudflare Worker
-                apiUrl: '/api',
+            config: {
+                // Dynamic URL detection:
+                // If on localhost, use port 3000 (Node proxy).
+                // If on production (terminologies.tech), use relative path '/api' (Cloudflare Worker).
+                apiUrl: (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
+                        ? 'http://localhost:3000' 
+                        : '/api',
                 showInactive: false,
                 darkMode: false,
                 compactView: false
@@ -149,10 +152,10 @@ config: {
         // ==========================================
 
         async apiRequest(endpoint, params = {}) {
-            // FIX: We pass 'window.location.origin' as the second argument.
-            // This tells the browser: "Attach /api/codesystems to the current website address."
+            // FIX: Pass window.location.origin as the second argument.
+            // This ensures relative paths (like /api) are correctly resolved against the current domain.
             const url = new URL(this.config.apiUrl + endpoint, window.location.origin);
-
+            
             Object.keys(params).forEach(key => {
                 if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
                     url.searchParams.append(key, params[key]);
@@ -875,9 +878,3 @@ config: {
 });
 
 app.mount('#app');
-
-
-
-
-
-
