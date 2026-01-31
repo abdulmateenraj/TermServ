@@ -124,7 +124,11 @@ const app = createApp({
     mounted() {
         // Load saved configuration
         this.loadConfig();
-        
+        // HARD OVERRIDE: Ignore saved URL if we are in production.
+    // This fixes the issue where an old 'http://...' URL is stuck in LocalStorage.
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        this.config.apiUrl = '/api';
+    }
         // Load history and bookmarks
         this.loadHistory();
         this.loadBookmarks();
@@ -894,4 +898,5 @@ const app = createApp({
 });
 
 app.mount('#app');
+
 
